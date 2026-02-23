@@ -6,3 +6,5 @@ in product development
 building agent for different task
  - for repeatative tasks
  - for logic trees
+
+using in saas to overcome new hurdles 
