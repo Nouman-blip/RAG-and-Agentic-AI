@@ -8,6 +8,6 @@ building agent for different tasks
  - for logic trees
 
 using in saas to overcome new hurdles like trading on top.
-
+making everyday life easy with agents 
 
 best in your field!
