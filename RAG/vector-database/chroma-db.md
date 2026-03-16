@@ -1,35 +1,119 @@
-# Chroma DB — Filtering & Similarity Search
+# Introduction to Vector Databases & Chroma DB — Cheat Sheet
 
 ---
 
-## Part 1: Filtering in Chroma DB
+## Distance & Similarity Metrics
 
-Chroma DB supports two types of filtering:
+| Metric | Sensitive to Magnitude | Normalized | Best For |
+|---|---|---|---|
+| **L2 Distance** | ✅ Yes | ❌ No | Spatial data, clustering, computer vision |
+| **Cosine Distance** | ❌ No | ✅ Yes | Text, embeddings, NLP |
+| **Dot Product** | ✅ Yes | ❌ No | Neural networks, recommender systems |
 
-| Filter Type | How | SQL Equivalent |
-|---|---|---|
-| **Metadata Filtering** | Filter by document attributes (`source`, `date`, etc.) | `WHERE` clause |
-| **Document Filtering** | Filter by content keywords (`$contains`, `$not_contains`) | `LIKE` / `CONTAINS` |
+### Key Formulas
 
----
-
-### Metadata Filtering — Operators
-
-| Operator | Meaning |
-|---|---|
-| `$eq` | Equal to (default if no operator given) |
-| `$ne` | Not equal to |
-| `$gt` / `$gte` | Greater than / or equal |
-| `$lt` / `$lte` | Less than / or equal |
-| `$in` / `$nin` | In list / Not in list |
-| `$and` / `$or` | Combine multiple filters |
-
-**Basic match:**
-```python
-collection.get(where={"source": "langchain.com"})
+```
+L2(a,b)        = sqrt(sum of squared differences)
+Dot Product    = sum of element-wise products
+Cosine Sim     = dot(a,b) / (||a|| * ||b||)
+Cosine Dist    = 1 - cosine_similarity(a,b)
 ```
 
-**Combined filter:**
+> 💡 If vectors are normalized, cosine similarity = dot product. Normalize when you only need cosine similarity.
+
+---
+
+## Vector DB vs Traditional DB
+
+| Function | Traditional DB | Vector DB |
+|---|---|---|
+| Data Format | Tables, rows, columns | Multi-dimensional vectors |
+| Search | SQL queries | Similarity / nearest neighbor search |
+| Indexing | B-trees | Graph-based HNSW |
+| Scalability | Sharding / resource augmentation | Horizontal scaling via distributed architecture |
+| Use Case | Business apps, transactions | AI apps, NLP, multimedia, semantic search |
+
+**Vector Libraries vs Vector Databases**
+- **Libraries** — in-memory, read & update only
+- **Databases** — persistent, full CRUD, enterprise-ready
+
+---
+
+## HNSW — Vector Index in Chroma DB
+
+Chroma DB's only indexing method. Builds a **multi-layered graph**:
+- Upper layers → sparse overview for fast navigation
+- Bottom layer → all vectors for detailed search
+- Search descends from top layer toward the query vector, pruning irrelevant regions early
+
+**Why HNSW?** Fast · Accurate · Scalable · Works with any similarity metric
+
+### HNSW Parameters
+
+| Parameter | Effect | Tradeoff |
+|---|---|---|
+| `space` | Distance metric (`l2`, `ip`, `cosine`) | — |
+| `ef_search` | Search breadth at query time | ↑ accuracy vs ↑ query time |
+| `ef_construction` | Index quality at build time | ↑ accuracy vs ↑ build time |
+| `max_neighbors` | Graph density | ↑ search quality vs ↑ memory |
+
+---
+
+## Chroma DB Setup
+
+```python
+import chromadb
+from chromadb.utils import embedding_functions
+
+ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+    model_name="all-MiniLM-L6-v2"
+)
+client = chromadb.Client()
+
+collection = client.create_collection(
+    name="my_collection",
+    configuration={
+        "hnsw": {"space": "cosine"},
+        "embedding_function": ef
+    }
+)
+```
+
+---
+
+## Data Operations
+
+```python
+# Add documents
+collection.add(
+    documents=["Doc text 1", "Doc text 2"],
+    metadatas=[{"source": "a", "version": 0.1}, {"source": "b", "version": 0.2}],
+    ids=["id1", "id2"]
+)
+
+# Get all
+collection.get()
+
+# Get with filter
+collection.get(where={"source": "a"})
+```
+
+---
+
+## Filtering
+
+### Metadata Operators
+
+```python
+"$eq"   # equal (default if no operator given)
+"$ne"   # not equal
+"$gt" / "$gte"  # greater than / or equal
+"$lt" / "$lte"  # less than / or equal
+"$in"   # in list
+"$nin"  # not in list
+```
+
+**Combined filters:**
 ```python
 collection.get(
     where={
@@ -41,114 +125,75 @@ collection.get(
 )
 ```
 
----
-
 ### Document (Content) Filtering
 
 ```python
-# Find docs containing a keyword
-collection.get(where_document={"$contains": "pandas"})
+# Contains
+where_document={"$contains": "pandas"}
 
-# Exclude docs with a keyword
-collection.get(where_document={"$not_contains": "library"})
+# Does not contain
+where_document={"$not_contains": "library"}
+
+# Combined
+where_document={"$or": [{"$contains": "LangChain"}, {"$contains": "Python"}]}
 ```
 
-> ⚠️ Document filtering is **case-sensitive** — `"Pandas"` ≠ `"pandas"`
+> ⚠️ Document filtering is **case-sensitive**
 
 ---
 
-### Combine Both Filters
-
-```python
-collection.get(
-    where={"version": {"$gt": 0.1}},
-    where_document={
-        "$or": [
-            {"$contains": "LangChain"},
-            {"$contains": "Python"}
-        ]
-    }
-)
-```
-
----
-
-## Part 2: Similarity Search & HNSW
-
-### What is a Vector Index?
-
-A brute-force similarity search compares a query against every vector — slow at scale. A **vector index** organizes embeddings so only a small subset needs to be compared, enabling fast search across millions of vectors.
-
----
-
-### HNSW — Hierarchical Navigable Small World
-
-Chroma DB's only indexing method. A multi-layered graph where:
-- **Upper layers** — sparse overview for fast navigation
-- **Bottom layer** — all vectors for detailed search
-- Each vector connects to a few nearby neighbors → most vectors reachable in just a few hops
-
-**Search:** starts at the top layer, descends toward the query vector, pruning irrelevant regions early.
-
----
-
-### Configuring HNSW
-
-```python
-collection = client.create_collection(
-    name="my_collection",
-    configuration={
-        "hnsw": {
-            "space": "cosine",      # l2 | ip | cosine
-            "ef_search": 100,       # higher = more accurate, slower queries
-            "ef_construction": 100, # higher = better index, slower build
-            "max_neighbors": 16     # higher = denser graph, more memory
-        },
-        "embedding_function": ef
-    }
-)
-```
-
-| Parameter | Controls | Tradeoff |
-|---|---|---|
-| `space` | Distance metric | `cosine` recommended for text |
-| `ef_search` | Search breadth at query time | ↑ accuracy vs ↑ query time |
-| `ef_construction` | Index quality at build time | ↑ accuracy vs ↑ build time & memory |
-| `max_neighbors` | Graph density | ↑ search quality vs ↑ memory |
-
----
-
-### Querying with Similarity Search
+## Similarity Search
 
 ```python
 # Basic query
-collection.query(query_texts=["cats"], n_results=3)
+collection.query(query_texts=["search term"], n_results=3)
 
 # With metadata filter
-collection.query(
-    query_texts=["polar bear"],
-    n_results=1,
-    where={"topic": "animals"}
-)
+collection.query(query_texts=["polar bear"], n_results=1, where={"topic": "animals"})
 
 # With document filter
+collection.query(query_texts=["polar bear"], n_results=1, where_document={"$not_contains": "library"})
+
+# Combined
 collection.query(
     query_texts=["polar bear"],
     n_results=1,
+    where={"topic": "animals"},
     where_document={"$not_contains": "library"}
 )
 ```
 
-> 💡 When a query returns unexpected results, adding **metadata or document filters** is often the simplest fix — no need to change the embedding model.
+---
+
+## Full Workflow
+
+```python
+# 1. Setup
+import chromadb
+from chromadb.utils import embedding_functions
+
+ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+client = chromadb.Client()
+
+# 2. Create collection
+collection = client.create_collection(
+    name="collection_name",
+    configuration={"hnsw": {"space": "cosine"}, "embedding_function": ef}
+)
+
+# 3. Add documents
+collection.add(documents=texts, metadatas=metadata, ids=ids)
+
+# 4. Search
+results = collection.query(query_texts=["query"], n_results=5)
+
+# 5. Process results
+for i, (doc_id, score, text) in enumerate(
+    zip(results['ids'][0], results['distances'][0], results['documents'][0])
+):
+    print(f"Rank {i+1}: {doc_id} | Score: {score:.4f} | {text}")
+```
 
 ---
 
-## Key Takeaways
-
-- Use `where` for metadata filtering and `where_document` for content filtering — combine both freely
-- HNSW is Chroma DB's only index — tune `ef_search` for query speed, `ef_construction` and `max_neighbors` for index quality
-- Semantic search can misfire on ambiguous terms — filters help narrow context and improve relevance
-
----
-
-> *Authors: Wojciech "Victor" Fulmyk*
+> *Author: Wojciech "Victor" Fulmyk*
